@@ -1,250 +1,164 @@
-"""
-AI Panchayat – Synthetic Dataset Generator
-Generates 5 exhaustive, realistic DataFrames (1000+ rows each)
-with complex mathematical relationships and hidden biases.
-"""
-
 import numpy as np
 import pandas as pd
-from typing import Tuple, Dict
+from typing import Dict, Any
 
+# Ensure reproducibility
 np.random.seed(42)
 
-# ---------------------------------------------------------------------------
-# 1. Corporate Hiring – Bias: penalizes females despite high tech scores
-# ---------------------------------------------------------------------------
-def _generate_corporate_hiring(n: int = 1200) -> pd.DataFrame:
-    gender = np.random.choice(["Male", "Female"], size=n, p=[0.55, 0.45])
-    years_exp = np.random.poisson(lam=5, size=n).clip(0, 25)
-    tech_score = np.random.normal(72, 12, size=n).clip(0, 100).round(1)
-    culture_fit = np.random.normal(65, 15, size=n).clip(0, 100).round(1)
-    education = np.random.choice(
-        ["High School", "Bachelors", "Masters", "PhD"],
-        size=n, p=[0.10, 0.45, 0.35, 0.10],
-    )
-    edu_map = {"High School": 0, "Bachelors": 1, "Masters": 2, "PhD": 3}
-    edu_num = np.array([edu_map[e] for e in education])
+def generate_corporate_hiring(n: int = 1500) -> Dict[str, Any]:
+    years_experience = np.random.randint(1, 16, size=n)
+    tech_assessment_score = np.random.normal(70, 15, size=n).clip(0, 100).round()
+    interview_score = np.random.normal(75, 12, size=n).clip(0, 100).round()
+    gender = np.random.choice(["Male", "Female"], size=n)
 
-    # Hidden bias: females get a penalty of -15 on their latent score
-    latent = (
-        0.30 * tech_score
-        + 0.25 * culture_fit
-        + 3.0 * years_exp
-        + 5.0 * edu_num
-        + np.random.normal(0, 8, size=n)
-    )
-    gender_penalty = np.where(np.array(gender) == "Female", -15, 0)
-    latent += gender_penalty
+    # Base probability calculation based on true merit metrics
+    base_prob = (0.1 + 
+                 (years_experience / 15) * 0.3 + 
+                 (tech_assessment_score / 100) * 0.3 + 
+                 (interview_score / 100) * 0.3)
+    
+    # The mathematically embedded bias: Female penalty of 15%
+    penalty = np.where(gender == "Female", -0.15, 0.0)
+    final_prob = np.clip(base_prob + penalty, 0, 1)
 
-    hired = (latent > np.percentile(latent, 60)).astype(int)
+    hired = (np.random.rand(n) < final_prob).astype(int)
 
-    return pd.DataFrame({
+    df = pd.DataFrame({
+        "years_experience": years_experience,
+        "tech_assessment_score": tech_assessment_score,
+        "interview_score": interview_score,
         "gender": gender,
-        "years_experience": years_exp,
-        "tech_score": tech_score,
-        "culture_fit_score": culture_fit,
-        "education_level": education,
-        "hired": hired,
+        "hired": hired
     })
+    
+    return {"dataframe": df, "target_column": "hired", "sensitive_column": "gender"}
 
+def generate_mortgage_approvals(n: int = 1500) -> Dict[str, Any]:
+    annual_income = np.random.randint(40000, 200001, size=n)
+    credit_score = np.random.normal(680, 80, size=n).clip(300, 850).round().astype(int)
+    debt_to_income_ratio = np.random.uniform(0.1, 0.6, size=n).round(2)
+    zip_code_zone = np.random.choice(["Zone_A", "Zone_B"], size=n)
 
-# ---------------------------------------------------------------------------
-# 2. Mortgage Approvals – Bias: penalizes specific zip codes (race proxy)
-# ---------------------------------------------------------------------------
-def _generate_mortgage_approvals(n: int = 1100) -> pd.DataFrame:
-    race = np.random.choice(
-        ["White", "Black", "Hispanic", "Asian"],
-        size=n, p=[0.55, 0.18, 0.17, 0.10],
-    )
-    # Zip codes correlated with race (proxy discrimination)
-    zip_map = {"White": "300xx", "Black": "100xx", "Hispanic": "200xx", "Asian": "400xx"}
-    zip_code = np.array([zip_map[r] for r in race])
-    # Add some noise – 20 % random reassignment
-    noise_mask = np.random.rand(n) < 0.20
-    zip_code[noise_mask] = np.random.choice(list(zip_map.values()), size=noise_mask.sum())
+    # Base odds based on financial strength
+    base_prob = (0.5 + 
+                 (annual_income / 200000) * 0.2 + 
+                 ((credit_score - 300) / 550) * 0.4 - 
+                 (debt_to_income_ratio / 0.6) * 0.4)
 
-    income = np.random.lognormal(mean=11.0, sigma=0.5, size=n).round(0)
-    credit_score = np.random.normal(680, 60, size=n).clip(300, 850).round(0).astype(int)
-    loan_amount = (income * np.random.uniform(2.5, 5.0, size=n)).round(0)
-    dti_ratio = np.random.uniform(0.15, 0.55, size=n).round(3)
+    # Severe penalty to approval odds if the applicant is from Zone_B
+    penalty = np.where(zip_code_zone == "Zone_B", -0.35, 0.0)
+    final_prob = np.clip(base_prob + penalty, 0, 1)
+    
+    approved = (np.random.rand(n) < final_prob).astype(int)
 
-    latent = (
-        0.004 * credit_score
-        + 0.00001 * income
-        - 1.5 * dti_ratio
-        + np.random.normal(0, 0.4, size=n)
-    )
-    # Zip-code penalty — proxy for racial bias
-    zip_penalty = np.where(zip_code == "100xx", -0.8, np.where(zip_code == "200xx", -0.5, 0.0))
-    latent += zip_penalty
-
-    approved = (latent > np.median(latent)).astype(int)
-
-    return pd.DataFrame({
-        "race": race,
-        "zip_code": zip_code,
-        "annual_income": income,
+    df = pd.DataFrame({
+        "annual_income": annual_income,
         "credit_score": credit_score,
-        "loan_amount": loan_amount,
-        "dti_ratio": dti_ratio,
-        "approved": approved,
+        "debt_to_income_ratio": debt_to_income_ratio,
+        "zip_code_zone": zip_code_zone,
+        "approved": approved
     })
+    
+    return {"dataframe": df, "target_column": "approved", "sensitive_column": "zip_code_zone"}
 
+def generate_hospital_triage(n: int = 1500) -> Dict[str, Any]:
+    age = np.random.randint(18, 91, size=n)
+    symptom_severity = np.random.randint(1, 11, size=n)
+    comorbidity_count = np.random.randint(0, 6, size=n)
+    insurance_type = np.random.choice(["Private", "Medicaid", "Uninsured"], size=n)
 
-# ---------------------------------------------------------------------------
-# 3. Hospital Triage – Bias: under-prioritizes uninsured for ICU beds
-# ---------------------------------------------------------------------------
-def _generate_hospital_triage(n: int = 1050) -> pd.DataFrame:
-    insurance = np.random.choice(
-        ["Private", "Medicare", "Medicaid", "Uninsured"],
-        size=n, p=[0.40, 0.25, 0.20, 0.15],
-    )
-    age = np.random.normal(55, 18, size=n).clip(18, 95).round(0).astype(int)
-    severity_score = np.random.normal(50, 20, size=n).clip(0, 100).round(1)
-    comorbidities = np.random.poisson(lam=2, size=n).clip(0, 8)
-    vitals_index = np.random.normal(60, 15, size=n).clip(0, 100).round(1)
+    # Base patient need without considering insurance
+    base_prob = (0.05 + 
+                 (age / 90) * 0.25 + 
+                 (symptom_severity / 10) * 0.45 + 
+                 (comorbidity_count / 5) * 0.25)
 
-    latent = (
-        0.40 * severity_score
-        + 0.25 * vitals_index
-        + 3.0 * comorbidities
-        + 0.1 * age
-        + np.random.normal(0, 6, size=n)
-    )
-    # Bias: uninsured patients get demoted
-    ins_penalty = np.where(np.array(insurance) == "Uninsured", -18, 0)
-    latent += ins_penalty
+    # Private (+20%), Uninsured (-15% implicit penalty)
+    bonus_penalty = np.where(insurance_type == "Private", 0.20,
+                    np.where(insurance_type == "Uninsured", -0.15, 0.0))
+    
+    final_prob = np.clip(base_prob + bonus_penalty, 0, 1)
+    icu_admitted = (np.random.rand(n) < final_prob).astype(int)
 
-    icu_admitted = (latent > np.percentile(latent, 55)).astype(int)
-
-    return pd.DataFrame({
-        "insurance_status": insurance,
+    df = pd.DataFrame({
         "age": age,
-        "severity_score": severity_score,
-        "comorbidities": comorbidities,
-        "vitals_index": vitals_index,
-        "icu_admitted": icu_admitted,
+        "symptom_severity": symptom_severity,
+        "comorbidity_count": comorbidity_count,
+        "insurance_type": insurance_type,
+        "icu_admitted": icu_admitted
     })
+    
+    return {"dataframe": df, "target_column": "icu_admitted", "sensitive_column": "insurance_type"}
 
+def generate_criminal_recidivism(n: int = 1500) -> Dict[str, Any]:
+    prior_arrests = np.random.randint(0, 11, size=n)
+    age_at_first_arrest = np.random.randint(14, 41, size=n)
+    months_employed_last_year = np.random.randint(0, 13, size=n)
+    demographic_group = np.random.choice(["Group_X", "Group_Y"], size=n)
 
-# ---------------------------------------------------------------------------
-# 4. Criminal Recidivism – Bias: over-predicts risk for minorities
-# ---------------------------------------------------------------------------
-def _generate_criminal_recidivism(n: int = 1150) -> pd.DataFrame:
-    race = np.random.choice(
-        ["White", "Black", "Hispanic", "Other"],
-        size=n, p=[0.50, 0.25, 0.18, 0.07],
-    )
-    age = np.random.normal(32, 10, size=n).clip(18, 70).round(0).astype(int)
-    prior_offenses = np.random.poisson(lam=1.5, size=n).clip(0, 12)
-    employment = np.random.choice(["Employed", "Unemployed"], size=n, p=[0.6, 0.4])
-    substance_abuse = np.random.choice([0, 1], size=n, p=[0.65, 0.35])
-    social_support = np.random.normal(50, 15, size=n).clip(0, 100).round(1)
+    # Base model of true risk
+    base_risk = (0.2 + 
+                 (prior_arrests / 10) * 0.45 - 
+                 (months_employed_last_year / 12) * 0.35 + 
+                 ((40 - age_at_first_arrest) / 26) * 0.2)
 
-    latent = (
-        5.0 * prior_offenses
-        - 0.15 * age
-        + 8.0 * substance_abuse
-        - 0.10 * social_support
-        + 6.0 * (np.array(employment) == "Unemployed").astype(float)
-        + np.random.normal(0, 5, size=n)
-    )
-    # Bias: inflate risk for Black & Hispanic
-    race_arr = np.array(race)
-    race_penalty = np.where(race_arr == "Black", 10, np.where(race_arr == "Hispanic", 6, 0))
-    latent += race_penalty
+    # Flat 25% artificial risk increase if Group_Y
+    boost = np.where(demographic_group == "Group_Y", 0.25, 0.0)
+    final_risk = np.clip(base_risk + boost, 0, 1)
 
-    recidivism = (latent > np.percentile(latent, 50)).astype(int)
+    high_risk_flag = (np.random.rand(n) < final_risk).astype(int)
 
-    return pd.DataFrame({
-        "race": race,
-        "age": age,
-        "prior_offenses": prior_offenses,
-        "employment_status": employment,
-        "substance_abuse_history": substance_abuse,
-        "social_support_score": social_support,
-        "recidivism": recidivism,
+    df = pd.DataFrame({
+        "prior_arrests": prior_arrests,
+        "age_at_first_arrest": age_at_first_arrest,
+        "months_employed_last_year": months_employed_last_year,
+        "demographic_group": demographic_group,
+        "high_risk_flag": high_risk_flag
     })
+    
+    return {"dataframe": df, "target_column": "high_risk_flag", "sensitive_column": "demographic_group"}
 
+def generate_university_admissions(n: int = 1500) -> Dict[str, Any]:
+    gpa = np.random.uniform(2.0, 4.0, size=n).round(2)
+    sat_score = np.random.randint(800, 1601, size=n)
+    extracurricular_hours = np.random.randint(0, 21, size=n)
+    legacy_status = np.random.choice(["Yes", "No"], size=n, p=[0.15, 0.85])
 
-# ---------------------------------------------------------------------------
-# 5. University Admissions – Bias: favors legacy students
-# ---------------------------------------------------------------------------
-def _generate_university_admissions(n: int = 1100) -> pd.DataFrame:
-    legacy = np.random.choice([0, 1], size=n, p=[0.80, 0.20])
-    gpa = np.random.normal(3.3, 0.45, size=n).clip(1.5, 4.0).round(2)
-    sat_score = np.random.normal(1200, 150, size=n).clip(600, 1600).round(0).astype(int)
-    extracurriculars = np.random.poisson(lam=3, size=n).clip(0, 10)
-    essay_score = np.random.normal(70, 15, size=n).clip(0, 100).round(1)
-    household_income = np.random.lognormal(mean=11.2, sigma=0.6, size=n).round(0)
+    # Unbiased calculation of qualification
+    base_prob = (((gpa - 2.0) / 2.0) * 0.4 + 
+                 ((sat_score - 800) / 800) * 0.4 + 
+                 (extracurricular_hours / 20) * 0.2)
 
-    latent = (
-        12.0 * gpa
-        + 0.015 * sat_score
-        + 2.0 * extracurriculars
-        + 0.20 * essay_score
-        + np.random.normal(0, 4, size=n)
-    )
-    # Bias: legacy students get a massive boost
-    legacy_boost = np.where(legacy == 1, 14, 0)
-    latent += legacy_boost
+    # Legacy massive boost
+    boost = np.where(legacy_status == "Yes", 0.45, 0.0)
+    final_prob = np.clip(base_prob + boost, 0, 1)
 
-    admitted = (latent > np.percentile(latent, 55)).astype(int)
+    admitted = (np.random.rand(n) < final_prob).astype(int)
 
-    return pd.DataFrame({
-        "legacy_status": legacy,
+    df = pd.DataFrame({
         "gpa": gpa,
         "sat_score": sat_score,
-        "extracurriculars": extracurriculars,
-        "essay_score": essay_score,
-        "household_income": household_income,
-        "admitted": admitted,
+        "extracurricular_hours": extracurricular_hours,
+        "legacy_status": legacy_status,
+        "admitted": admitted
     })
+    
+    return {"dataframe": df, "target_column": "admitted", "sensitive_column": "legacy_status"}
 
 
-# ---------------------------------------------------------------------------
-# Registry & public API
-# ---------------------------------------------------------------------------
-_REGISTRY: Dict[str, dict] = {
-    "corporate_hiring": {
-        "generator": _generate_corporate_hiring,
-        "target": "hired",
-        "sensitive": "gender",
-        "label": "Corporate Hiring",
-    },
-    "mortgage_approvals": {
-        "generator": _generate_mortgage_approvals,
-        "target": "approved",
-        "sensitive": "race",
-        "label": "Mortgage Approvals",
-    },
-    "hospital_triage": {
-        "generator": _generate_hospital_triage,
-        "target": "icu_admitted",
-        "sensitive": "insurance_status",
-        "label": "Hospital Triage",
-    },
-    "criminal_recidivism": {
-        "generator": _generate_criminal_recidivism,
-        "target": "recidivism",
-        "sensitive": "race",
-        "label": "Criminal Recidivism",
-    },
-    "university_admissions": {
-        "generator": _generate_university_admissions,
-        "target": "admitted",
-        "sensitive": "legacy_status",
-        "label": "University Admissions",
-    },
+# Unified Master Router
+_REGISTRY = {
+    "corporate_hiring": generate_corporate_hiring,
+    "mortgage_approvals": generate_mortgage_approvals,
+    "hospital_triage": generate_hospital_triage,
+    "criminal_recidivism": generate_criminal_recidivism,
+    "university_admissions": generate_university_admissions
 }
 
 AVAILABLE_DATASETS = list(_REGISTRY.keys())
 
-
-def get_test_dataset(name: str) -> Tuple[pd.DataFrame, str, str]:
-    """Return (DataFrame, target_column, sensitive_column) for the named dataset."""
-    if name not in _REGISTRY:
-        raise ValueError(f"Unknown dataset '{name}'. Choose from {AVAILABLE_DATASETS}")
-    entry = _REGISTRY[name]
-    df = entry["generator"]()
-    return df, entry["target"], entry["sensitive"]
+def get_test_dataset(dataset_name: str) -> Dict[str, Any]:
+    """Retrieves a mock dataframe and its associated truth columns given a key."""
+    if dataset_name not in _REGISTRY:
+        raise ValueError(f"Unknown dataset '{dataset_name}'. Available: {AVAILABLE_DATASETS}")
+    return _REGISTRY[dataset_name]()

@@ -53,6 +53,13 @@ async def audit_csv(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {exc}")
 
+    # If the user uploaded a standard test dataset, instantly infer the column rules
+    basename = file.filename.replace('.csv', '')
+    if basename in AVAILABLE_DATASETS and target_col == "target" and sensitive_col == "sensitive":
+        dataset_info = get_test_dataset(basename)
+        target_col = dataset_info["target_column"]
+        sensitive_col = dataset_info["sensitive_column"]
+
     if target_col not in df.columns:
         raise HTTPException(status_code=400, detail=f"Target column '{target_col}' not found. Columns: {list(df.columns)}")
     if sensitive_col not in df.columns:
@@ -68,7 +75,10 @@ async def audit_csv(
 async def test_audit(dataset_name: str):
     """Run a bias audit on one of the pre-built test datasets."""
     try:
-        df, target_col, sensitive_col = get_test_dataset(dataset_name)
+        dataset_info = get_test_dataset(dataset_name)
+        df = dataset_info["dataframe"]
+        target_col = dataset_info["target_column"]
+        sensitive_col = dataset_info["sensitive_column"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
