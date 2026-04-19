@@ -6,3 +6,4 @@ fairlearn
 google-generativeai
 python-dotenv
 python-multipart
+chardet
