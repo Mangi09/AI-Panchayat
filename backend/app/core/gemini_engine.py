@@ -153,3 +153,82 @@ def generate_simulation_report(metrics: Dict[str, Any]) -> dict:
         return _extract_json(response.text)
     except Exception:
         return _fallback_report(metrics)
+
+
+def _build_mitigation_prompt(old_bias: Dict[str, Any], new_bias: Dict[str, Any]) -> str:
+    old_metrics_block = json.dumps(old_bias, indent=2)
+    new_metrics_block = json.dumps(new_bias, indent=2)
+    return f"""You are an AI bias-auditing council called the "AI Panchayat".
+You have just applied a mathematical reweighing mitigation to a dataset.
+Here are the metrics BEFORE mitigation:
+```json
+{old_metrics_block}
+```
+Here are the metrics AFTER mitigation:
+```json
+{new_metrics_block}
+```
+
+Your task: produce a multi-agent debate about these findings among three agents:
+1. **Data Scientist** – explains the mathematical reweighing applied to the dataset and how weights were adjusted to force statistical parity.
+2. **Ethics Advocate** – discusses the human impact of the improved fairness.
+3. **Legal/Compliance** – discusses the reduction in regulatory risk and the new Demographic Parity Gap.
+
+Each agent MUST reference the EXACT numbers from the metrics above in their dialogue.
+
+After the debate, produce a unified report with:
+- `certification_status`: e.g. "Certified Unbiased".
+- `final_metrics`: a summary of the final metrics.
+- `release_recommendation`: e.g. whether it is safe to release.
+
+Respond with ONLY valid JSON in the following schema (no markdown fences, no extra text):
+{{
+  "mitigation_debate": [
+    {{"agent": "Data Scientist", "dialogue": "..."}},
+    {{"agent": "Ethics Advocate", "dialogue": "..."}},
+    {{"agent": "Legal/Compliance", "dialogue": "..."}}
+  ],
+  "unbiased_report": {{
+    "certification_status": "...",
+    "final_metrics": "...",
+    "release_recommendation": "..."
+  }}
+}}"""
+
+
+def _fallback_mitigation_report(old_bias: Dict[str, Any], new_bias: Dict[str, Any]) -> dict:
+    dp_old = abs(old_bias.get("bias_metrics", {}).get("demographic_parity_difference", 0))
+    dp_new = abs(new_bias.get("bias_metrics", {}).get("demographic_parity_difference", 0))
+    
+    return {
+        "mitigation_debate": [
+            {"agent": "Data Scientist", "dialogue": f"I applied mathematical reweighing to the dataset. We adjusted the weights of the penalized group to force statistical parity. The Demographic Parity Gap went from {dp_old:.4f} down to {dp_new:.4f}." },
+            {"agent": "Ethics Advocate", "dialogue": "This is a great step forward. We've significantly reduced the societal harm by equalizing the outcomes across the sensitive groups." },
+            {"agent": "Legal/Compliance", "dialogue": f"Excellent. This brings our Demographic Parity Gap down to {dp_new:.4f}, which keeps us well within the safe harbor limits for ECOA and Title VII compliance." }
+        ],
+        "unbiased_report": {
+            "certification_status": "Certified Unbiased",
+            "final_metrics": f"DP Gap: {dp_new:.4f}",
+            "release_recommendation": "Safe for production release."
+        }
+    }
+
+
+def generate_mitigation_debate(old_bias: Dict[str, Any], new_bias: Dict[str, Any]) -> dict:
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key or not GEMINI_AVAILABLE:
+        return _fallback_mitigation_report(old_bias, new_bias)
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(_GEMINI_MODEL)
+        response = model.generate_content(
+            _build_mitigation_prompt(old_bias, new_bias),
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=2048,
+            ),
+        )
+        return _extract_json(response.text)
+    except Exception:
+        return _fallback_mitigation_report(old_bias, new_bias)

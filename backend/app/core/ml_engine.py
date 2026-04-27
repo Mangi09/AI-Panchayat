@@ -286,3 +286,74 @@ def run_mitigated_audit(
             "trade_off":          method_info["trade_off"],
         },
     }
+
+def run_mitigation(df: pd.DataFrame, target_col: str, sensitive_col: str) -> Dict[str, Any]:
+    """
+    Apply mathematical reweighing, retrain, and return metrics + CSV string.
+    """
+    df_encoded, label_encoders = _encode_dataframe(df, target_col)
+
+    X         = df_encoded.drop(columns=[target_col])
+    y         = df_encoded[target_col].values
+    sensitive = df_encoded[sensitive_col].values
+
+    sample_weights = _compute_reweighing_weights(y, sensitive)
+
+    X_train, X_test, y_train, y_test, sens_train, sens_test, w_train, w_test = train_test_split(
+        X, y, sensitive, sample_weights, test_size=0.3, random_state=42, stratify=y)
+
+    scaler = StandardScaler()
+    X_train_sc = scaler.fit_transform(X_train)
+    X_test_sc  = scaler.transform(X_test)
+
+    # 1. Unmitigated baseline
+    base_model = LogisticRegression(max_iter=500, random_state=42)
+    base_model.fit(X_train_sc, y_train)
+    y_pred_original = base_model.predict(X_test_sc)
+    original_metrics = _compute_metrics(
+        y_test, y_pred_original, sens_test, sensitive_col, label_encoders)
+
+    # 2. Mitigated model
+    mitigated_model = LogisticRegression(max_iter=500, random_state=42)
+    mitigated_model.fit(X_train_sc, y_train, sample_weight=w_train)
+    y_pred_mitigated = mitigated_model.predict(X_test_sc)
+    
+    mitigated_metrics = _compute_metrics(
+        y_test, y_pred_mitigated, sens_test, sensitive_col, label_encoders)
+
+    dp_before = abs(original_metrics["bias_metrics"]["demographic_parity_difference"])
+    dp_after  = abs(mitigated_metrics["bias_metrics"]["demographic_parity_difference"])
+    dp_reduction = round((dp_before - dp_after) / dp_before * 100, 1) if dp_before > 0 else 0.0
+
+    eo_before = abs(original_metrics["bias_metrics"]["equalized_odds_difference"])
+    eo_after  = abs(mitigated_metrics["bias_metrics"]["equalized_odds_difference"])
+    eo_reduction = round((eo_before - eo_after) / eo_before * 100, 1) if eo_before > 0 else 0.0
+
+    acc_change = round(
+        (mitigated_metrics["model_metrics"]["accuracy"] -
+         original_metrics["model_metrics"]["accuracy"]) * 100, 2)
+
+    # Mitigated dataset
+    df_mitigated = df.copy()
+    df_mitigated["mitigation_weight"] = sample_weights
+    csv_string = df_mitigated.to_csv(index=False)
+    
+    return {
+        "metrics": {
+            "dataset_shape":     {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
+            "target_column":     target_col,
+            "sensitive_column":  sensitive_col,
+            "original":          original_metrics,
+            "mitigated":         mitigated_metrics,
+            "improvement": {
+                "dp_reduction_pct":   dp_reduction,
+                "eo_reduction_pct":   eo_reduction,
+                "accuracy_change_pct": acc_change,
+                "method":             "Reweighing (Pre-processing)",
+                "method_key":         "reweighing",
+                "description":        "Assigns higher loss weights to under-represented (group, label) pairs.",
+                "trade_off":          "Minimal accuracy cost; best when bias is in training distribution.",
+            },
+        },
+        "csv_string": csv_string
+    }

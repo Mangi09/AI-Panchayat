@@ -21,8 +21,8 @@ try:
 except ImportError:
     _CHARDET = False
 
-from app.core.ml_engine import run_audit, run_mitigated_audit
-from app.core.gemini_engine import generate_simulation_report
+from app.core.ml_engine import run_audit, run_mitigated_audit, run_mitigation
+from app.core.gemini_engine import generate_simulation_report, generate_mitigation_debate
 from app.core.data_generator import get_test_dataset, AVAILABLE_DATASETS
 
 app = FastAPI(title="AI Panchayat – Bias Auditing API", version="2.1.0")
@@ -208,14 +208,15 @@ async def list_datasets():
 
 
 @app.get("/api/mitigate/{dataset_name}")
-async def mitigate_test_dataset(
-    dataset_name: str,
-    method: MitigationMethod = Query(default="exponentiated_gradient"),
-):
+async def mitigate_test_dataset(dataset_name: str):
     info = _load_test_dataset(dataset_name)
-    return run_mitigated_audit(
-        info["dataframe"], info["target_column"], info["sensitive_column"], method=method
-    )
+    result = run_mitigation(info["dataframe"], info["target_column"], info["sensitive_column"])
+    debate = generate_mitigation_debate(result["metrics"]["original"], result["metrics"]["mitigated"])
+    return {
+        "metrics": result["metrics"],
+        "simulation": debate,
+        "csv_string": result["csv_string"]
+    }
 
 
 @app.post("/api/mitigate")
@@ -223,7 +224,6 @@ async def mitigate_csv(
     file: UploadFile = File(...),
     target_col:    str = Query(..., description="Name of the binary target column"),
     sensitive_col: str = Query(..., description="Name of the protected-attribute column"),
-    method: MitigationMethod = Query(default="exponentiated_gradient"),
 ):
     """Upload a CSV and apply bias mitigation."""
     if not file.filename.endswith(".csv"):
@@ -235,4 +235,11 @@ async def mitigate_csv(
     _assert_columns(df, target_col, sensitive_col)
     _assert_binary_target(df, target_col)
 
-    return run_mitigated_audit(df, target_col, sensitive_col, method=method)
+    result = run_mitigation(df, target_col, sensitive_col)
+    debate = generate_mitigation_debate(result["metrics"]["original"], result["metrics"]["mitigated"])
+    
+    return {
+        "metrics": result["metrics"],
+        "simulation": debate,
+        "csv_string": result["csv_string"]
+    }

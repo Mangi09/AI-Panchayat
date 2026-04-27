@@ -98,7 +98,33 @@ function MetricDelta({ label, before, after, higherIsBetter = true }) {
 }
 
 function MitigationResultPanel({ result, onReset }) {
-  const { original, mitigated, improvement } = result;
+  const { metrics, simulation, csv_string } = result;
+  const { original, mitigated, improvement } = metrics;
+  
+  const handleDownload = () => {
+    const blob = new Blob([csv_string], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'unbiased_dataset_certified.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const getAgentColor = (a) => {
+    if (a.includes('Data Scientist')) return 'text-blue-400 bg-blue-400/10 border-blue-400/30';
+    if (a.includes('Ethics'))         return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30';
+    if (a.includes('Legal') || a.includes('Compliance')) return 'text-rose-400 bg-rose-400/10 border-rose-400/30';
+    return 'text-purple-400 bg-purple-400/10 border-purple-400/30';
+  };
+  const getAgentIcon = (a) => {
+    if (a.includes('Data Scientist')) return <FileText   className="w-5 h-5 text-blue-400" />;
+    if (a.includes('Ethics'))         return <ShieldCheck className="w-5 h-5 text-emerald-400" />;
+    if (a.includes('Legal') || a.includes('Compliance')) return <Scale className="w-5 h-5 text-rose-400" />;
+    return <AlertTriangle className="w-5 h-5 text-purple-400" />;
+  };
 
   const groupRateData = Object.keys(original.group_acceptance_rates).map((group) => ({
     group,
@@ -204,6 +230,52 @@ function MitigationResultPanel({ result, onReset }) {
           <MetricDelta label="Equalized Odds Diff (↓ better)" before={Math.abs(original.bias_metrics.equalized_odds_difference)} after={Math.abs(mitigated.bias_metrics.equalized_odds_difference)} higherIsBetter={false} />
         </div>
       </div>
+
+      {simulation && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <div className="glass-dark rounded-3xl p-6 flex flex-col max-h-[600px]">
+            <h3 className="text-xl font-semibold mb-4 border-b border-gray-700/50 pb-4 flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" /> MiroFish Mitigation Debate
+            </h3>
+            <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+              {simulation.mitigation_debate?.map((turn, i) => (
+                <div key={i} className={`flex flex-col p-4 rounded-2xl border ${getAgentColor(turn.agent)}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {getAgentIcon(turn.agent)}
+                    <span className="font-bold text-sm tracking-wide uppercase">{turn.agent}</span>
+                  </div>
+                  <p className="text-gray-200 text-sm leading-relaxed">{turn.dialogue}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="glass-dark rounded-3xl p-8 relative overflow-hidden bg-emerald-900/20 border border-emerald-500/40">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
+            <h3 className="text-2xl font-bold mb-6 flex items-center gap-3 text-emerald-300">
+              <CheckCircle className="w-6 h-6 text-emerald-400" /> Certified Unbiased Report
+            </h3>
+            <div className="space-y-4 mb-8">
+              <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/20">
+                <span className="text-xs text-emerald-500 font-bold uppercase tracking-wider block mb-1">Status</span>
+                <span className="text-lg text-emerald-100">{simulation.unbiased_report?.certification_status}</span>
+              </div>
+              <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/20">
+                <span className="text-xs text-emerald-500 font-bold uppercase tracking-wider block mb-1">Final Metrics</span>
+                <span className="text-lg text-emerald-100">{simulation.unbiased_report?.final_metrics}</span>
+              </div>
+              <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/20">
+                <span className="text-xs text-emerald-500 font-bold uppercase tracking-wider block mb-1">Recommendation</span>
+                <span className="text-lg text-emerald-100">{simulation.unbiased_report?.release_recommendation}</span>
+              </div>
+            </div>
+            {csv_string && (
+              <button onClick={handleDownload} className="w-full flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-4 rounded-2xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.4)] hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]">
+                <FileText className="w-6 h-6" /> Download Certified Unbiased Dataset (CSV)
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -430,30 +502,27 @@ export default function App() {
   };
 
   // ── Apply mitigation ────────────────────────────────────────────────────────
-  const applyMitigation = async (method) => {
+  const applyMitigation = async () => {
     setShowModal(false);
     setMitState({ state: 'LOADING', data: null, error: null });
 
     try {
       let res;
       if (activeDataset?.type === 'preset') {
-        res = await axios.get(`${API_BASE}/mitigate/${activeDataset.id}?method=${method}`);
+        res = await axios.get(`${API_BASE}/mitigate/${activeDataset.id}`);
       } else if (activeDataset?.type === 'upload') {
         const { file, targetCol, sensitiveCol } = activeDataset;
         const formData = new FormData();
         formData.append('file', file);
-        // BUG 1 FIX: no headers block; BUG 4 FIX: column params in URL
         res = await axios.post(
-          `${API_BASE}/mitigate?method=${method}&target_col=${encodeURIComponent(targetCol)}&sensitive_col=${encodeURIComponent(sensitiveCol)}`,
+          `${API_BASE}/mitigate?target_col=${encodeURIComponent(targetCol)}&sensitive_col=${encodeURIComponent(sensitiveCol)}`,
           formData
-          // ← no headers object here
         );
       } else {
         throw new Error('No active dataset. Please run an audit first.');
       }
       setMitState({ state: 'RESOLVED', data: res.data, error: null });
     } catch (err) {
-      // BUG 2 FIX
       setMitState({ state: 'ERROR', data: null, error: extractError(err) });
     }
   };
@@ -487,7 +556,6 @@ export default function App() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
-      {showModal && <MethodSelectorModal onSelect={applyMitigation} onCancel={() => setShowModal(false)} />}
       <Header />
 
       {/* ── IDLE ─────────────────────────────────────────────────────────── */}
@@ -633,7 +701,7 @@ export default function App() {
               <h4 className="text-sm font-semibold text-emerald-400 uppercase tracking-wider mb-2">Proposed Mitigation</h4>
               <p className="text-emerald-50 text-lg mb-6">{dataState.data.simulation?.report?.proposed_mitigation}</p>
               {mitState.state === 'IDLE' && (
-                <button onClick={() => setShowModal(true)}
+                <button onClick={() => applyMitigation()}
                   className="flex items-center justify-center w-full sm:w-auto gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-bold py-3 px-8 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
                   <CheckCircle className="w-5 h-5" /> Apply Recommended Mitigation
                 </button>
@@ -641,7 +709,7 @@ export default function App() {
               {mitState.state === 'LOADING' && (
                 <div className="flex items-center gap-3 text-emerald-300">
                   <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="font-semibold">Applying mitigation algorithm…</span>
+                  <span className="font-semibold">Calculating AIF360 Weights & Re-Simulating Council...</span>
                 </div>
               )}
               {mitState.state === 'ERROR' && (
